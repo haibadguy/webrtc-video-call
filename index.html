@@ -2,14 +2,25 @@
 <html>
 
 <head>
-    <title>Simple WebRTC</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WebRTC Video Call</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+        .videos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+        video { width: 100%; background: #111; border-radius: 8px; }
+        button { margin: 1rem 0.5rem 1rem 0; padding: 0.6rem 1rem; }
+        #status { color: #555; }
+    </style>
 </head>
 
 <body>
-    <h1>Simple WebRTC</h1>
-    <video id="localVideo" autoplay muted></video>
-    <video id="remoteVideo" autoplay></video>
-    <button id="startCall">Start Call</button>
+    <h1>WebRTC Video Call</h1>
+    <p id="status">Connecting to signaling server...</p>
+    <div class="videos">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+    <button id="startCall" disabled>Start call</button>
     <button id="reset">Reset</button>
 
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
@@ -19,18 +30,18 @@
         const startCallButton = document.getElementById("startCall");
         const resetButton = document.getElementById("reset");
 
-        const socket = io("https://one312pywebrtc.onrender.com");
+        const socket = io();
         let localStream;
         let pc;
+        let peerCount = 0;
+        const pendingCandidates = [];
 
         function showError(message) {
-            const errorContainer = document.createElement("div");
-            errorContainer.style.color = "red";
-            errorContainer.textContent = message;
-            document.body.appendChild(errorContainer);
+            status.textContent = message;
+            status.style.color = "crimson";
         }
 
-        async function startCall() {
+        async function preparePeerConnection() {
             pc = new RTCPeerConnection({
                 iceServers: [{
                     urls: "stun:stun.l.google.com:19302"
@@ -43,23 +54,22 @@
                 }
             };
 
-            pc.onicecandidate = (event) => {
+            pc.onicecandidate = event => {
                 if (event.candidate) {
-                    console.log("Sending ICE candidate to server:", event.candidate);
-                    socket.emit("candidate", JSON.stringify(event.candidate));
+                    socket.emit("candidate", event.candidate.toJSON());
                 }
             };
 
             pc.oniceconnectionstatechange = () => {
                 console.log("ICE connection state:", pc.iceConnectionState);
-                if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+                if (["disconnected", "failed"].includes(pc.iceConnectionState)) {
                     showError("ICE connection state: " + pc.iceConnectionState);
                 }
             };
 
             pc.onconnectionstatechange = () => {
                 console.log("Connection state:", pc.connectionState);
-                if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+                if (["disconnected", "failed"].includes(pc.connectionState)) {
                     showError("Connection state: " + pc.connectionState);
                 }
             };
@@ -72,21 +82,27 @@
                 localVideo.srcObject = localStream;
 
                 localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                socket.emit("offer", JSON.stringify(pc.localDescription));
             } catch (error) {
                 console.error("Error accessing media devices.", error);
                 showError("Error accessing your camera or microphone. Please check permissions.");
             }
         }
 
+        async function startCall() {
+            await preparePeerConnection();
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit("offer", pc.localDescription.toJSON());
+        }
+
+        const status = document.getElementById("status");
+
         socket.on("answer", async (data) => {
-            console.log("Answer received:", data);
-            const answer = typeof data === "string" ? JSON.parse(data) : data;
             try {
-                await pc.setRemoteDescription(answer);
+                await pc.setRemoteDescription(data);
+                while (pendingCandidates.length) {
+                    await pc.addIceCandidate(pendingCandidates.shift());
+                }
             } catch (error) {
                 console.error("Error setting remote description:", error);
                 showError("Failed to set remote description.");
@@ -94,18 +110,46 @@
         });
 
         socket.on("candidate", async (data) => {
-            console.log("ICE Candidate received:", data);
-            const candidate = JSON.parse(data);
             try {
-                await pc.addIceCandidate(candidate);
+                if (!pc || !pc.remoteDescription) {
+                    pendingCandidates.push(data);
+                    return;
+                }
+                await pc.addIceCandidate(data);
             } catch (error) {
                 console.error("Error adding ICE candidate:", error);
                 showError("Failed to add ICE candidate.");
             }
         });
 
-        socket.on("connect", () => {
-            console.log("Connected to signaling server.");
+        socket.on("peer-count", ({ count }) => {
+            peerCount = count;
+            startCallButton.disabled = count !== 2;
+            status.textContent = count === 2
+                ? "Two peers connected. Start the call in one tab."
+                : "Waiting for a second browser tab...";
+        });
+
+        socket.on("offer", async offer => {
+            if (!pc) {
+                await preparePeerConnection();
+            }
+            await pc.setRemoteDescription(offer);
+            while (pendingCandidates.length) {
+                await pc.addIceCandidate(pendingCandidates.shift());
+            }
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit("answer", pc.localDescription.toJSON());
+        });
+
+        socket.on("peer-left", () => {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            remoteVideo.srcObject = null;
+            status.textContent = "The other peer left. Waiting for another peer...";
         });
 
         socket.on("connect_error", () => {

@@ -20,8 +20,8 @@ thương lượng xong, luồng audio/video không đi qua server signaling.
 ## Chạy nhanh
 
 ```bash
-git clone https://github.com/haibadguy/1312pywebrtc.git
-cd 1312pywebrtc
+git clone https://github.com/haibadguy/webrtc-video-call.git
+cd webrtc-video-call
 python -m venv .venv
 # Windows:
 .venv\Scripts\activate
@@ -32,7 +32,8 @@ python server.py
 ```
 
 Mở `http://localhost:5000` trong hai tab. Cho phép camera/microphone, sau đó
-bấm **Start call** ở một tab.
+bấm **Start call** ở một tab. Khi deploy, server dùng port từ biến môi trường
+`PORT` nếu nền tảng cung cấp.
 
 ## Công nghệ
 

@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, request, send_from_directory
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -38,4 +40,5 @@ def handle_answer(data):
     socketio.emit("answer", data, skip_sid=request.sid)
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", "5000"))
+    socketio.run(app, host="0.0.0.0", port=port)
